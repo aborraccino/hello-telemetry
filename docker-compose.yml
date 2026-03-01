@@ -1,6 +1,6 @@
 services:
   ht-mysql:
-    image: mysql:latest
+    image: mysql:8.4
     container_name: ht-mysql
     environment:
       MYSQL_ROOT_PASSWORD: rootpassword
@@ -41,7 +41,7 @@ services:
       - ht_network
 
   ht-otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
+    image: otel/opentelemetry-collector-contrib:0.146.0
     container_name: ht-otel-collector
     volumes:
       - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
@@ -58,16 +58,12 @@ services:
 
   ht-jaeger:
     container_name: ht-jaeger
-    image: jaegertracing/all-in-one:latest
+    image: jaegertracing/jaeger:2.15.1
+    volumes:
+      - ./jaeger-config.yaml:/jaeger/config.yaml
+    command: ["--config", "/jaeger/config.yaml"]
     ports:
-      - "${JAEGER_COMPACT_PORT}:6831/udp"
-      - "${JAEGER_BINARY_PORT}:6832/udp"
-      - "${JAEGER_CONFIGS_PORT}:5778"
       - "${JAEGER_UI_PORT}:16686"
-      - "${JAEGER_GRPC_PORT}:14250"
-      - "${JAEGER_HTTP_PORT}:14268"
-      - "${JAEGER_ADMIN_PORT}:14269"
-      - "${JAEGER_ZIPKIN_PORT}:9411"
     networks:
       - ht_network
 
