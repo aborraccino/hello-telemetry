@@ -1,6 +1,6 @@
 services:
   ht-mysql:
-    image: artifactory.luigi.worldpay.io/docker/mysql:latest
+    image: docker.io/library/mysql:latest
     container_name: ht-mysql
     environment:
       MYSQL_ROOT_PASSWORD: rootpassword
@@ -25,6 +25,9 @@ services:
       - "${JMX_RMI_PORT}:1099"
     environment:
       - JAVA_OPTS=-Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.port=${JMX_PORT} -Dcom.sun.management.jmxremote.rmi.port=${JMX_RMI_PORT} -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Djava.rmi.server.hostname=localhost
+      - JAVA_TOOL_OPTIONS=-javaagent:/opt/opentelemetry-javaagent.jar
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://ht-otel-collector:4318
+      - OTEL_SERVICE_NAME=tomcat-service
     depends_on:
       - ht-mysql
       - ht-python-service
@@ -41,7 +44,7 @@ services:
       - ht_network
 
   ht-otel-collector:
-    image: artifactory.luigi.worldpay.io/docker/otel/opentelemetry-collector-contrib:0.146.0
+    image: docker.io/otel/opentelemetry-collector-contrib:0.146.0
     container_name: ht-otel-collector
     volumes:
       - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
@@ -58,7 +61,7 @@ services:
 
   ht-jaeger:
     container_name: ht-jaeger
-    image: artifactory.luigi.worldpay.io/docker/jaegertracing/jaeger:2.15.1
+    image: docker.io/jaegertracing/jaeger:2.17.0
     ports:
       - "6831:6831/udp"
       - "6832:6832/udp"
