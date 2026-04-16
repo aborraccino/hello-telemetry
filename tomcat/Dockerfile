@@ -1,5 +1,5 @@
 # Use the official Tomcat image from the Docker Hub
-FROM docker.io/library/tomcat:11.0.15
+FROM docker.io/library/tomcat:jdk21-temurin
 
 # Download java agent
 ADD --chmod=644 https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/latest/download/opentelemetry-javaagent.jar /opt/opentelemetry-javaagent.jar

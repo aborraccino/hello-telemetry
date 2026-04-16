@@ -1,5 +1,15 @@
 package com.bbsod.demo;
 
+import io.opentelemetry.api.OpenTelemetry;
+import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.api.common.Attributes;
+import io.opentelemetry.api.metrics.LongCounter;
+import io.opentelemetry.api.metrics.Meter;
+import io.opentelemetry.exporter.otlp.metrics.OtlpGrpcMetricExporter;
+import io.opentelemetry.sdk.OpenTelemetrySdk;
+import io.opentelemetry.sdk.metrics.SdkMeterProvider;
+import io.opentelemetry.sdk.metrics.export.PeriodicMetricReader;
+import io.opentelemetry.sdk.resources.Resource;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
@@ -12,6 +22,7 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -26,8 +37,48 @@ import org.apache.hc.core5.http.io.entity.StringEntity;
 
 public class MyServlet extends HttpServlet {
 
+    // Define class field
+    private static final String INSTRUMENTATION_NAME = MyServlet.class.getName();
+    private final Meter meter;
+    private final LongCounter requestCounter;
+
     // Constructor
     public MyServlet() {
+        OpenTelemetry openTelemetry = initOpenTelemetry();
+        this.meter = openTelemetry.getMeter(INSTRUMENTATION_NAME);
+        this.requestCounter = meter.counterBuilder("app.db.db_requests")
+                .setDescription("Count DB requests")
+                .build();
+    }
+
+    static OpenTelemetry initOpenTelemetry() {
+
+        // set up the resource with the service name
+        Resource resource = Resource.create(Attributes.of(AttributeKey.stringKey("service.name"), "tomcat-service"));
+
+        // Metrics
+        OtlpGrpcMetricExporter otlpGrpcMetricExporter = OtlpGrpcMetricExporter
+                .builder()
+                .setEndpoint("http://ht-otel-collector:4317")
+                .build();
+        PeriodicMetricReader periodicMetricReader = PeriodicMetricReader
+                .builder(otlpGrpcMetricExporter)
+                .setInterval(Duration.ofSeconds(10))
+                .build();
+        SdkMeterProvider sdkMeterProvider  = SdkMeterProvider
+                .builder()
+                .setResource(resource)
+                .registerMetricReader(periodicMetricReader)
+                .build();
+        OpenTelemetrySdk openTelemetrySdk = OpenTelemetrySdk
+                .builder()
+                .setMeterProvider(sdkMeterProvider)
+                .build();
+
+        // clean up
+        Runtime.getRuntime().addShutdownHook(new Thread(openTelemetrySdk::close));
+
+        return openTelemetrySdk;
     }
 
     @Override
@@ -46,6 +97,7 @@ public class MyServlet extends HttpServlet {
         }
 
         // Establish database connection and get data
+        requestCounter.add(1);
 
         // JDBC connection parameters
         String jdbcUrl = "jdbc:mysql://ht-mysql:3306/mydatabase";
