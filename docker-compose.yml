@@ -1,6 +1,6 @@
 services:
   ht-mysql:
-    image: mysql:8.4
+    image: artifactory.luigi.worldpay.io/docker/mysql:latest
     container_name: ht-mysql
     environment:
       MYSQL_ROOT_PASSWORD: rootpassword
@@ -41,7 +41,7 @@ services:
       - ht_network
 
   ht-otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.146.0
+    image: artifactory.luigi.worldpay.io/docker/otel/opentelemetry-collector-contrib:0.146.0
     container_name: ht-otel-collector
     volumes:
       - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
@@ -58,12 +58,16 @@ services:
 
   ht-jaeger:
     container_name: ht-jaeger
-    image: jaegertracing/jaeger:2.15.1
-    volumes:
-      - ./jaeger-config.yaml:/jaeger/config.yaml
-    command: ["--config", "/jaeger/config.yaml"]
+    image: artifactory.luigi.worldpay.io/docker/jaegertracing/jaeger:2.15.1
     ports:
-      - "${JAEGER_UI_PORT}:16686"
+      - "6831:6831/udp"
+      - "6832:6832/udp"
+      - "5778:5778"
+      - "16686:16686"
+      - "14250:14250"
+      - "14268:14268"
+      - "14269:14269"
+      - "9411:9411"
     networks:
       - ht_network
 
