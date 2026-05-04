@@ -5,11 +5,16 @@ import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.metrics.LongCounter;
 import io.opentelemetry.api.metrics.Meter;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.exporter.otlp.metrics.OtlpGrpcMetricExporter;
+import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.metrics.SdkMeterProvider;
 import io.opentelemetry.sdk.metrics.export.PeriodicMetricReader;
 import io.opentelemetry.sdk.resources.Resource;
+import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
@@ -41,6 +46,7 @@ public class MyServlet extends HttpServlet {
     private static final String INSTRUMENTATION_NAME = MyServlet.class.getName();
     private final Meter meter;
     private final LongCounter requestCounter;
+    private final Tracer tracer;
 
     // Constructor
     public MyServlet() {
@@ -49,6 +55,7 @@ public class MyServlet extends HttpServlet {
         this.requestCounter = meter.counterBuilder("app.db.db_requests")
                 .setDescription("Count DB requests")
                 .build();
+        this.tracer = openTelemetry.getTracer(INSTRUMENTATION_NAME);
     }
 
     static OpenTelemetry initOpenTelemetry() {
@@ -70,9 +77,24 @@ public class MyServlet extends HttpServlet {
                 .setResource(resource)
                 .registerMetricReader(periodicMetricReader)
                 .build();
+
+        // Traces
+        OtlpGrpcSpanExporter otlpGrpcSpanExporter = OtlpGrpcSpanExporter.builder()
+                .setEndpoint("http://ht-otel-collector:4317")
+                .build();
+
+        SimpleSpanProcessor simpleSpanProcessor = SimpleSpanProcessor.builder(otlpGrpcSpanExporter)
+                .build();
+
+        SdkTracerProvider sdkTracerProvider = SdkTracerProvider.builder()
+                .setResource(resource)
+                .addSpanProcessor(simpleSpanProcessor)
+                .build();
+
         OpenTelemetrySdk openTelemetrySdk = OpenTelemetrySdk
                 .builder()
                 .setMeterProvider(sdkMeterProvider)
+                .setTracerProvider(sdkTracerProvider)
                 .build();
 
         // clean up
@@ -89,15 +111,21 @@ public class MyServlet extends HttpServlet {
         PrintWriter out = response.getWriter();
         response.setContentType("text/html");
 
+        Span sleepSpan = tracer.spanBuilder("SleepForTwoSeconds").startSpan();
+
         // Sleep for 2 seconds
         try {
             Thread.sleep(2000);
         } catch (InterruptedException e) {
             e.printStackTrace();
+        } finally {
+            sleepSpan.end();
         }
 
         // Establish database connection and get data
         requestCounter.add(1);
+
+        Span dbSpan = tracer.spanBuilder("DatabaseConnection").startSpan();
 
         // JDBC connection parameters
         String jdbcUrl = "jdbc:mysql://ht-mysql:3306/mydatabase";
@@ -149,6 +177,8 @@ public class MyServlet extends HttpServlet {
         } catch (Exception e) {
             e.printStackTrace();
             out.println("<h2>Error: " + e.getMessage() + "</h2>");
+        } finally {
+            dbSpan.end();
         }
 
         // Make a request to the Python microservice
@@ -159,6 +189,8 @@ public class MyServlet extends HttpServlet {
     }
 
     private String getAverageAge(List<JSONObject> dataList) throws IOException {
+        Span computeSpan = tracer.spanBuilder("Compute Request").startSpan();
+
         try (CloseableHttpClient httpClient = HttpClients.createDefault()) {
             HttpPost httpPost = new HttpPost("http://ht-python-service:5000/compute_average_age");
             httpPost.setHeader("Content-Type", "application/json");
@@ -173,6 +205,8 @@ public class MyServlet extends HttpServlet {
                     EntityUtils.toString(response.getEntity()));
             JSONObject responseJson = new JSONObject(responseString);
             return responseJson.get("average_age").toString();
+        } finally {
+            computeSpan.end();
         }
     }
 }
