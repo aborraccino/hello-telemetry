@@ -6,7 +6,10 @@ import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.metrics.LongCounter;
 import io.opentelemetry.api.metrics.Meter;
 import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator;
+import io.opentelemetry.context.Context;
 import io.opentelemetry.exporter.otlp.metrics.OtlpGrpcMetricExporter;
 import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
@@ -31,6 +34,8 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
+import org.apache.hc.core5.http.ParseException;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -47,6 +52,7 @@ public class MyServlet extends HttpServlet {
     private final Meter meter;
     private final LongCounter requestCounter;
     private final Tracer tracer;
+    private Context parentContext;
 
     // Constructor
     public MyServlet() {
@@ -105,13 +111,22 @@ public class MyServlet extends HttpServlet {
 
     @Override
     protected void doGet(HttpServletRequest request, HttpServletResponse response)
-            throws ServletException, IOException {
+            throws IOException {
 
         List<JSONObject> dataList = new ArrayList<>();
         PrintWriter out = response.getWriter();
         response.setContentType("text/html");
 
-        Span sleepSpan = tracer.spanBuilder("SleepForTwoSeconds").startSpan();
+        // Create a new ParentSpan
+        Span parentSpan = tracer.spanBuilder("GET").setNoParent().startSpan();
+        parentSpan.makeCurrent();
+
+        parentContext = Context.current().with(parentSpan);
+
+        Span sleepSpan = tracer.spanBuilder("SleepForTwoSeconds")
+                .setSpanKind(SpanKind.INTERNAL)
+                .setParent(parentContext)
+                .startSpan();
 
         // Sleep for 2 seconds
         try {
@@ -125,7 +140,10 @@ public class MyServlet extends HttpServlet {
         // Establish database connection and get data
         requestCounter.add(1);
 
-        Span dbSpan = tracer.spanBuilder("DatabaseConnection").startSpan();
+        Span dbSpan = tracer.spanBuilder("DatabaseConnection")
+                .setSpanKind(SpanKind.CLIENT)
+                .setParent(parentContext)
+                .startSpan();
 
         // JDBC connection parameters
         String jdbcUrl = "jdbc:mysql://ht-mysql:3306/mydatabase";
@@ -182,14 +200,23 @@ public class MyServlet extends HttpServlet {
         }
 
         // Make a request to the Python microservice
-        String averageAge = getAverageAge(dataList);
+        String averageAge;
+        try {
+            averageAge = getAverageAge(dataList);
+        } catch (ParseException e) {
+            throw new RuntimeException(e);
+        }
         out.println("<h2>Average Age: " + averageAge + "</h2>");
         out.println("</body></html>");
 
     }
 
-    private String getAverageAge(List<JSONObject> dataList) throws IOException {
-        Span computeSpan = tracer.spanBuilder("Compute Request").startSpan();
+    private String getAverageAge(List<JSONObject> dataList) throws IOException, ParseException {
+        Span computeSpan = tracer.spanBuilder("Compute Request")
+                .setSpanKind(SpanKind.CLIENT)
+                .setParent(parentContext)
+                .startSpan();
+        Context context = Context.current().with(computeSpan);
 
         try (CloseableHttpClient httpClient = HttpClients.createDefault()) {
             HttpPost httpPost = new HttpPost("http://ht-python-service:5000/compute_average_age");
@@ -201,10 +228,16 @@ public class MyServlet extends HttpServlet {
             StringEntity entity = new StringEntity(requestData.toString());
             httpPost.setEntity(entity);
 
-            String responseString = httpClient.execute(httpPost, response ->
-                    EntityUtils.toString(response.getEntity()));
-            JSONObject responseJson = new JSONObject(responseString);
-            return responseJson.get("average_age").toString();
+            // W3CTraceContextPropagator
+            W3CTraceContextPropagator propagator = W3CTraceContextPropagator.getInstance();
+            propagator.inject(context, httpPost, HttpPost::setHeader);
+
+            try (CloseableHttpResponse response = httpClient.execute(httpPost)) {
+                String responseString =  EntityUtils.toString(response.getEntity());
+                JSONObject responseJson = new JSONObject(responseString);
+                return responseJson.get("average_age").toString();
+            }
+
         } finally {
             computeSpan.end();
         }
