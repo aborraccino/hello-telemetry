@@ -1,6 +1,8 @@
 package com.bbsod.demo;
 
 import io.opentelemetry.api.OpenTelemetry;
+import io.opentelemetry.api.baggage.Baggage;
+import io.opentelemetry.api.baggage.propagation.W3CBaggagePropagator;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.metrics.LongCounter;
@@ -36,6 +38,7 @@ import java.sql.Statement;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.logging.Logger;
 
 import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
 import org.apache.hc.core5.http.ParseException;
@@ -47,7 +50,6 @@ import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.apache.hc.core5.http.io.entity.StringEntity;
-import org.slf4j.Logger;
 import org.slf4j.bridge.SLF4JBridgeHandler;
 
 public class MyServlet extends HttpServlet {
@@ -244,6 +246,13 @@ public class MyServlet extends HttpServlet {
                 .startSpan();
         Context context = Context.current().with(computeSpan);
 
+        Baggage baggage = Baggage.builder()
+                .put("user.id", "12345")
+                .put("user.name", "John")
+                .build();
+
+        Context contextWithBaggage = Context.current().with(baggage);
+
         try (CloseableHttpClient httpClient = HttpClients.createDefault()) {
             HttpPost httpPost = new HttpPost("http://ht-python-service:5000/compute_average_age");
             httpPost.setHeader("Content-Type", "application/json");
@@ -257,6 +266,8 @@ public class MyServlet extends HttpServlet {
             // W3CTraceContextPropagator
             W3CTraceContextPropagator propagator = W3CTraceContextPropagator.getInstance();
             propagator.inject(context, httpPost, HttpPost::setHeader);
+
+            W3CBaggagePropagator.getInstance().inject(contextWithBaggage, httpPost, HttpPost::setHeader);
 
             try (CloseableHttpResponse response = httpClient.execute(httpPost)) {
                 String responseString =  EntityUtils.toString(response.getEntity());

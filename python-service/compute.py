@@ -3,7 +3,7 @@ from flask import Flask, request, jsonify
 # OpenTelemetry SDK
 from opentelemetry.sdk.metrics import MeterProvider, Meter
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry import metrics,trace
+from opentelemetry import metrics,trace,baggage
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -17,6 +17,8 @@ from opentelemetry.exporter.otlp.proto.grpc._log_exporter import (
 )
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+
+from opentelemetry.baggage.propagation import W3CBaggagePropagator
 
 
 # Create a Resource with the service.name attribute
@@ -64,15 +66,27 @@ app = Flask(__name__)
 @app.route('/compute_average_age', methods=['POST'])
 def compute_average_age():  
 
+    # Extract context
+    # ctx = TraceContextTextMapPropagator().extract(request.headers)
+    baggage_ctx = W3CBaggagePropagator().extract(request.headers)
+    baggage_items = baggage.get_all(context=baggage_ctx)
+
+    # Convert Baggage items to a dictionary of attributes
+    attributes = {key: value for key, value in baggage_items.items()}
+
     # Increment compute counter
-    compute_request_count.add(1)
+    compute_request_count.add(1, attribute)
 
     # Extract context
     ctx = TraceContextTextMapPropagator().extract(request.headers)
 
     # Start a new span
     with tracer.start_as_current_span("ComputeSpan",context=ctx):
-        logger.info("Average compute in progress")
+        logger_with_attributes = logging.LoggerAdapter(logger, attribute)
+        logger_with_attributes.info("Average compute in progress")
+
+        current_span = trace.get_current_span()
+        current_span.set_attributes(attributes)
 
         # Process the request data
         data = request.json['data']
